@@ -104,6 +104,19 @@ if __name__ == '__main__':
   image_list += sorted(
       glob.glob(os.path.join(args.datapath, '*.jpg'))
   )  # [::stride]
+  
+  print(f"Scene: {scene_name}")
+  print(f"Data path: {args.datapath}")
+  print(f"Found {len(image_list)} images")
+  
+  if len(image_list) == 0:
+    print(f"ERROR: No images found in {args.datapath}")
+    print("Please check:")
+    print("  1. The datapath is correct")
+    print("  2. Images are in PNG or JPG format")
+    print("  3. The directory exists and is accessible")
+    sys.exit(1)
+  
   img_data = []
 
   for t, (image_file) in tqdm.tqdm(enumerate(image_list)):
@@ -116,6 +129,11 @@ if __name__ == '__main__':
     img_data.append(image)
 
   img_data = np.array(img_data)
+  
+  print(f"Loaded {img_data.shape[0]} images with shape {img_data.shape}")
+  if img_data.shape[0] == 0:
+    print("ERROR: No images loaded!")
+    sys.exit(1)
 
   flows_low = []
 
@@ -132,6 +150,9 @@ if __name__ == '__main__':
   masks_arr_up = []
 
   for step in [1, 2, 4, 8, 15]:
+    start_idx = max(0, -step)
+    end_idx = img_data.shape[0] - max(0, step)
+    print(f"Step {step}: processing frames from {start_idx} to {end_idx} (total: {max(0, end_idx - start_idx)} pairs)")
     flows_arr_low = []
     for i in tqdm.tqdm(range(max(0, -step), img_data.shape[0] - max(0, step))):
       image1 = (
@@ -177,16 +198,27 @@ if __name__ == '__main__':
         flow_low_fwd = flow_low[0].cpu().numpy().transpose(1, 2, 0)
         flow_low_bwd = flow_low[1].cpu().numpy().transpose(1, 2, 0)
 
+        # Get target dimensions (half of padded dimensions)
+        target_h = flow_up.shape[-2] // 2
+        target_w = flow_up.shape[-1] // 2
+        
         flow_up_fwd = resize_flow(
             flow_up[0].cpu().numpy().transpose(1, 2, 0),
-            flow_up.shape[-2] // 2,
-            flow_up.shape[-1] // 2,
+            target_h,
+            target_w,
         )
         flow_up_bwd = resize_flow(
             flow_up[1].cpu().numpy().transpose(1, 2, 0),
-            flow_up.shape[-2] // 2,
-            flow_up.shape[-1] // 2,
+            target_h,
+            target_w,
         )
+
+        # Verify shapes are consistent
+        assert flow_up_fwd.shape == flow_up_bwd.shape, \
+            f"Flow shape mismatch: fwd {flow_up_fwd.shape} vs bwd {flow_up_bwd.shape}"
+        
+        if len(flows_arr_up) > 0 and flows_arr_up[0].shape != flow_up_fwd.shape:
+            print(f"Warning: Flow shape changed from {flows_arr_up[0].shape} to {flow_up_fwd.shape}")
 
         bwd2fwd_flow = warp_flow(flow_up_bwd, flow_up_fwd)
         fwd_lr_error = np.linalg.norm(flow_up_fwd + bwd2fwd_flow, axis=-1)
@@ -201,9 +233,55 @@ if __name__ == '__main__':
         masks_arr_up.append(fwd_mask_up)
 
   iijj = np.stack((ii, jj), axis=0)
-  flows_high = np.array(flows_arr_up).transpose(0, 3, 1, 2)
+  
+  # Debug information
+  print(f"Total flows collected: {len(flows_arr_up)}")
+  if len(flows_arr_up) > 0:
+    print(f"First flow shape: {flows_arr_up[0].shape}")
+    print(f"Checking all flow shapes are consistent...")
+    shapes = [f.shape for f in flows_arr_up]
+    unique_shapes = set(shapes)
+    if len(unique_shapes) > 1:
+      print(f"ERROR: Inconsistent shapes found: {unique_shapes}")
+      for idx, shape in enumerate(shapes):
+        if shape != shapes[0]:
+          print(f"  Flow {idx} has different shape: {shape} (expected {shapes[0]})")
+      sys.exit(1)
+    else:
+      print(f"All flows have consistent shape: {shapes[0]}")
+  else:
+    print("ERROR: No flows collected!")
+    sys.exit(1)
+  
+  # Convert list to numpy array: shape will be (N, H, W, 2)
+  # Use explicit stacking to ensure proper array creation
+  try:
+    flows_high = np.stack(flows_arr_up, axis=0)
+    print(f"flows_high shape after np.stack: {flows_high.shape}")
+  except Exception as e:
+    print(f"ERROR during np.stack: {e}")
+    print(f"Attempting np.array instead...")
+    flows_high = np.array(flows_arr_up)
+    print(f"flows_high shape after np.array: {flows_high.shape}")
+    print(f"flows_high dtype: {flows_high.dtype}")
+  
+  if flows_high.ndim == 4 and flows_high.shape[-1] == 2:
+    # Shape is (N, H, W, 2), transpose to (N, 2, H, W)
+    flows_high = flows_high.transpose(0, 3, 1, 2)
+    print(f"flows_high shape after transpose: {flows_high.shape}")
+  else:
+    print(f"ERROR: Expected 4D array with shape (N, H, W, 2), got shape {flows_high.shape}")
+    sys.exit(1)
+    
   flow_masks_high = np.array(masks_arr_up)[:, None, ...]
+  print(f"flow_masks_high shape: {flow_masks_high.shape}")
+  
   Path('./cache_flow/%s' % scene_name).mkdir(parents=True, exist_ok=True)
   np.save('./cache_flow/%s/flows.npy' % scene_name, np.float16(flows_high))
   np.save('./cache_flow/%s/flows_masks.npy' % scene_name, flow_masks_high)
   np.save('./cache_flow/%s/ii-jj.npy' % scene_name, iijj)
+  
+  print(f"Successfully saved flow data for {scene_name}")
+  print(f"  - flows.npy: shape {flows_high.shape}, dtype float16")
+  print(f"  - flows_masks.npy: shape {flow_masks_high.shape}")
+  print(f"  - ii-jj.npy: shape {iijj.shape}")

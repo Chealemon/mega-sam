@@ -31,7 +31,7 @@ if __name__ == "__main__":
   rte = []
   rre = []
 
-  gt_root_dir = "/home/zhengqili/filestore/droid_slam/data/Sintel"
+  gt_root_dir = "/mnt/d/mega-sam/Sintel"
   pred_root_dir = "./outputs_cvd_sintel"
 
   abs_rel_list = []

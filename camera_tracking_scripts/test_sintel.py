@@ -185,10 +185,27 @@ if __name__ == "__main__":
   if args.scene_name is not None:
     args.upsample = True
 
+  # 将相对路径转换为绝对路径
+  script_dir = os.path.dirname(os.path.abspath(__file__))
+  project_root = os.path.dirname(script_dir)
+  
+  if not os.path.isabs(args.mono_depth_path):
+    args.mono_depth_path = os.path.join(project_root, args.mono_depth_path)
+  if not os.path.isabs(args.metric_depth_path):
+    args.metric_depth_path = os.path.join(project_root, args.metric_depth_path.strip())
+
   print("Running evaluation on {}".format(args.datapath))
   print(args)
 
-  scene_name = args.scene_name.split("/")[-1]
+  # 如果没有指定 scene_name，从 datapath 中提取
+  if args.scene_name is None:
+    scene_name = os.path.basename(args.datapath.rstrip('/'))
+    # datapath 已经包含了 scene_name，所以直接使用它
+    data_root = args.datapath
+  else:
+    scene_name = args.scene_name.split("/")[-1]
+    data_root = os.path.join(args.datapath, scene_name)
+  
   stride = 1
   tstamps = []
   rgb_list = []
@@ -196,23 +213,27 @@ if __name__ == "__main__":
   mask_list = []
   image_list = sorted(
       glob.glob(
-          os.path.join("%s/%s/rgb" % (args.datapath, scene_name), "*.png")
+          os.path.join(data_root, "rgb", "*.png")
       )
   )
   # NOTE Mono is inverse depth, but zoe-metric-depth is depth!
   mono_disp_paths = sorted(
       glob.glob(
-          os.path.join("%s/%s" % (args.mono_depth_path, scene_name), "*.npy")
+          os.path.join(args.mono_depth_path, scene_name, "*.npy")
       )
   )
   metric_depth_paths = sorted(
       glob.glob(
-          os.path.join("%s/%s" % (args.metric_depth_path, scene_name), "*.npz")
+          os.path.join(args.metric_depth_path, scene_name, "*.npz")
       )
   )
 
-  assert len(mono_disp_paths) == len(image_list)
-  assert len(mono_disp_paths) == len(metric_depth_paths)
+  print(f"Found {len(image_list)} images in {data_root}/rgb")
+  print(f"Found {len(mono_disp_paths)} mono depth files in {args.mono_depth_path}/{scene_name}")
+  print(f"Found {len(metric_depth_paths)} metric depth files in {args.metric_depth_path}/{scene_name}")
+  
+  assert len(mono_disp_paths) == len(image_list), f"Mismatch: {len(mono_disp_paths)} mono vs {len(image_list)} images"
+  assert len(mono_disp_paths) == len(metric_depth_paths), f"Mismatch: {len(mono_disp_paths)} mono vs {len(metric_depth_paths)} metric"
 
   img_0 = cv2.imread(image_list[0])
   scales = []
@@ -220,7 +241,7 @@ if __name__ == "__main__":
   da_disp_list = []
 
   fx, fy, cx, cy = np.loadtxt(
-      os.path.join(args.datapath, scene_name, "calibration.txt")
+      os.path.join(data_root, "calibration.txt")
   ).tolist()
 
   img_0 = cv2.imread(image_list[0])

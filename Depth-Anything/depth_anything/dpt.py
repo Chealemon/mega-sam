@@ -201,9 +201,20 @@ class DPT_DINOv2(nn.Module):
           pretrained=False,
       )
     else:
-      self.pretrained = torch.hub.load(
-          'facebookresearch/dinov2', 'dinov2_{:}14'.format(encoder)
-      )
+      import os
+      # 尝试使用镜像或设置更长的超时
+      try:
+        # 先尝试使用 force_reload=False 使用缓存
+        self.pretrained = torch.hub.load(
+            'facebookresearch/dinov2', 
+            'dinov2_{:}14'.format(encoder),
+            force_reload=False,
+            trust_repo=True
+        )
+      except Exception as e:
+        print(f"加载失败，错误信息: {e}")
+        print("请使用 --localhub 参数并手动下载模型，或检查网络连接")
+        raise
 
     # breakpoint()
 
